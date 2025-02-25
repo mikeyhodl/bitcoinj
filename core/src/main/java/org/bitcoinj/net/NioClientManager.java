@@ -18,8 +18,9 @@ package org.bitcoinj.net;
 
 import com.google.common.base.Throwables;
 import com.google.common.util.concurrent.AbstractExecutionThreadService;
+import org.bitcoinj.base.internal.FutureUtils;
 import org.bitcoinj.utils.ContextPropagatingThreadFactory;
-import org.bitcoinj.utils.ListenableCompletableFuture;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -44,7 +45,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * single network processing thread.
  */
 public class NioClientManager extends AbstractExecutionThreadService implements ClientConnectionManager {
-    private static final org.slf4j.Logger log = LoggerFactory.getLogger(NioClientManager.class);
+    private static final Logger log = LoggerFactory.getLogger(NioClientManager.class);
 
     private final Selector selector;
 
@@ -72,7 +73,7 @@ public class NioClientManager extends AbstractExecutionThreadService implements 
             ConnectionHandler handler = new ConnectionHandler(connection, key, connectedHandlers);
             try {
                 if (sc.finishConnect()) {
-                    log.info("Connected to {}", sc.socket().getRemoteSocketAddress());
+                    log.debug("Connected to {}", sc.socket().getRemoteSocketAddress());
                     key.interestOps((key.interestOps() | SelectionKey.OP_READ) & ~SelectionKey.OP_CONNECT).attach(handler);
                     connection.connectionOpened();
                     data.future.complete(data.address);
@@ -87,7 +88,10 @@ public class NioClientManager extends AbstractExecutionThreadService implements 
                 // may cause this. Otherwise it may be any arbitrary kind of connection failure.
                 // Calling sc.socket().getRemoteSocketAddress() here throws an exception, so we can only log the error itself
                 Throwable cause = Throwables.getRootCause(e);
-                log.warn("Failed to connect with exception: {}: {}", cause.getClass().getName(), cause.getMessage(), e);
+                if (cause instanceof IOException)
+                    log.info("Failed to connect: {}: {}", cause.getClass().getName(), cause.getMessage());
+                else
+                    log.warn("Failed to connect: {}: {}", cause.getClass().getName(), cause.getMessage(), e);
                 handler.closeConnection();
                 data.future.completeExceptionally(cause);
                 data.future = null;
@@ -155,7 +159,7 @@ public class NioClientManager extends AbstractExecutionThreadService implements 
     }
 
     @Override
-    public ListenableCompletableFuture<SocketAddress> openConnection(SocketAddress serverAddress, StreamConnection connection) {
+    public CompletableFuture<SocketAddress> openConnection(SocketAddress serverAddress, StreamConnection connection) {
         if (!isRunning())
             throw new IllegalStateException();
         // Create a new connection, give it a connection as an attachment
@@ -166,9 +170,9 @@ public class NioClientManager extends AbstractExecutionThreadService implements 
             PendingConnect data = new PendingConnect(sc, connection, serverAddress);
             newConnectionChannels.offer(data);
             selector.wakeup();
-            return ListenableCompletableFuture.of(data.future);
+            return data.future;
         } catch (Throwable e) {
-            return ListenableCompletableFuture.failedFuture(e);
+            return FutureUtils.failedFuture(e);
         }
     }
 
